@@ -1,0 +1,480 @@
+
+<!DOCTYPE html>
+<html lang="sq">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Neon Dash 🎮</title>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: #08091c;
+  color: white;
+  font-family: Arial, sans-serif;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 15px;
+}
+
+.game {
+  width: 100%;
+  max-width: 850px;
+  text-align: center;
+}
+
+h1 {
+  font-size: clamp(32px, 7vw, 55px);
+  margin: 5px;
+  color: #63f7ff;
+  text-shadow: 0 0 20px #00c8ff;
+}
+
+.subtitle { color: #b7b9db; }
+
+.stats {
+  display: flex;
+  justify-content: space-around;
+  gap: 8px;
+  margin: 18px 0;
+}
+
+.stat {
+  background: #171932;
+  border: 1px solid #373d70;
+  padding: 12px;
+  border-radius: 12px;
+  flex: 1;
+}
+
+.stat span {
+  color: #68f7ff;
+  font-weight: bold;
+  font-size: 22px;
+}
+
+.arena {
+  position: relative;
+  border: 2px solid #5a65ff;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 0 30px #454bff44;
+  background: #0b102c;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: manipulation;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+  background: #08091cdd;
+}
+
+.overlay h2 { font-size: 32px; margin: 8px; }
+.overlay p { max-width: 340px; line-height: 1.5; }
+
+button {
+  cursor: pointer;
+  border: 0;
+  border-radius: 12px;
+  padding: 13px 22px;
+  font-size: 16px;
+  font-weight: bold;
+  background: linear-gradient(100deg, #6b5cff, #00d9ff);
+  color: #08091c;
+  margin: 6px;
+}
+
+button:hover { transform: scale(1.04); }
+
+.controls {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 15px 0;
+}
+
+.hint { color: #aaaed2; font-size: 14px; }
+.hidden { display: none !important; }
+</style>
+</head>
+
+<body>
+<div class="game">
+  <h1>NEON DASH ⚡</h1>
+  <p class="subtitle">Vrapo, kërce dhe mblidh energji!</p>
+
+  <div class="stats">
+    <div class="stat">⭐ Pikët<br><span id="score">0</span></div>
+    <div class="stat">🪙 Monedhat<br><span id="coins">0</span></div>
+    <div class="stat">🏆 Rekordi<br><span id="best">0</span></div>
+  </div>
+
+  <div class="arena">
+    <canvas id="canvas" width="800" height="360"></canvas>
+
+    <div class="overlay" id="overlay">
+      <div style="font-size:55px">🚀</div>
+      <h2 id="message">Gati për sfidë?</h2>
+      <p id="description">
+        Kërce mbi pengesat, mbledh monedha
+        dhe shiko sa larg mund të shkosh!
+      </p>
+      <button id="start">FILL0 LOJËN ▶</button>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="jump">⬆ KËCE</button>
+    <button id="pause">⏸ PAUZË</button>
+    <button id="restart">↻ RIFILLO</button>
+  </div>
+
+  <p class="hint">
+    Kontrollet: SPACE, ↑ ose klik në lojë për të kërcyer.
+    Në telefon prek ekranin!
+  </p>
+</div>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const $ = id => document.getElementById(id);
+
+let running = false;
+let paused = false;
+let ended = false;
+let score = 0;
+let coins = 0;
+let best = Number(localStorage.getItem("neonBest") || 0);
+let speed = 5;
+let frame = 0;
+let obstacles = [];
+let treasures = [];
+let particles = [];
+
+const ground = 300;
+
+const player = {
+  x: 90, y: ground - 42,
+  w: 34, h: 42,
+  vy: 0, jumping: false
+};
+
+$("best").textContent = best;
+
+function reset() {
+  score = 0;
+  coins = 0;
+  speed = 5;
+  frame = 0;
+  obstacles = [];
+  treasures = [];
+  particles = [];
+  player.y = ground - player.h;
+  player.vy = 0;
+  player.jumping = false;
+  updateStats();
+}
+
+function updateStats() {
+  $("score").textContent = Math.floor(score);
+  $("coins").textContent = coins;
+  $("best").textContent = best;
+}
+
+function startGame() {
+  reset();
+  running = true;
+  paused = false;
+  ended = false;
+  $("overlay").classList.add("hidden");
+  $("pause").textContent = "⏸ PAUZË";
+}
+
+function jump() {
+  if (!running || paused || ended) return;
+
+  if (!player.jumping) {
+    player.vy = -13;
+    player.jumping = true;
+    burst(player.x + 15, player.y + player.h, "#63f7ff", 5);
+  }
+}
+
+function burst(x, y, color, amount) {
+  for (let i = 0; i < amount; i++) {
+    particles.push({
+      x, y,
+      vx: (Math.random() - .5) * 5,
+      vy: (Math.random() - .8) * 5,
+      life: 25,
+      color
+    });
+  }
+}
+
+function spawn() {
+  if (frame % Math.max(42, Math.floor(95 - speed * 4)) === 0) {
+    const h = 25 + Math.random() * 27;
+    obstacles.push({
+      x: 820, y: ground - h,
+      w: 22 + Math.random() * 18,
+      h
+    });
+  }
+
+  if (frame % 95 === 0) {
+    treasures.push({
+      x: 820,
+      y: ground - 75 - Math.random() * 95,
+      r: 11,
+      got: false
+    });
+  }
+}
+
+function drawBackground() {
+  const gradient = ctx.createLinearGradient(0, 0, 0, 360);
+  gradient.addColorStop(0, "#10183d");
+  gradient.addColorStop(1, "#241044");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 800, 360);
+
+  // Stars
+  for (let i = 0; i < 45; i++) {
+    const x = (i * 137 - frame * .4 % 800 + 800) % 800;
+    const y = (i * 71) % 240;
+    ctx.fillStyle = "#ffffff88";
+    ctx.fillRect(x, y, 2, 2);
+  }
+
+  // Neon city
+  for (let i = 0; i < 14; i++) {
+    const x = (i * 75 - frame * .8 % 75 + 800) % 800;
+    const h = 40 + (i * 37) % 90;
+    ctx.fillStyle = "#25285c";
+    ctx.fillRect(x, ground - h, 43, h);
+
+    ctx.fillStyle = "#6268ff";
+    for (let wy = ground - h + 12; wy < ground - 8; wy += 17) {
+      ctx.fillRect(x + 9, wy, 5, 5);
+      ctx.fillRect(x + 25, wy, 5, 5);
+    }
+  }
+
+  ctx.fillStyle = "#15182e";
+  ctx.fillRect(0, ground, 800, 60);
+
+  ctx.fillStyle = "#61f5ff";
+  ctx.fillRect(0, ground, 800, 3);
+
+  ctx.fillStyle = "#444b84";
+  for (let x = -(frame * speed % 55); x < 800; x += 55) {
+    ctx.fillRect(x, ground + 24, 27, 3);
+  }
+}
+
+function drawPlayer() {
+  ctx.save();
+  ctx.shadowBlur = 18;
+  ctx.shadowColor = "#00eaff";
+
+  ctx.fillStyle = "#61f5ff";
+  ctx.fillRect(player.x, player.y, player.w, player.h);
+
+  ctx.fillStyle = "#25285c";
+  ctx.fillRect(player.x + 20, player.y + 9, 9, 9);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(player.x + 23, player.y + 11, 4, 4);
+
+  ctx.fillStyle = "#a66bff";
+  ctx.fillRect(player.x + 5, player.y + player.h - 5, 10, 8);
+
+  ctx.restore();
+}
+
+function drawObstacle(o) {
+  ctx.save();
+  ctx.shadowBlur = 15;
+  ctx.shadowColor = "#ff3e83";
+  ctx.fillStyle = "#ff3e83";
+  ctx.beginPath();
+  ctx.moveTo(o.x, ground);
+  ctx.lineTo(o.x + o.w / 2, o.y);
+  ctx.lineTo(o.x + o.w, ground);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawCoin(c) {
+  ctx.save();
+  ctx.shadowBlur = 15;
+  ctx.shadowColor = "#ffe45e";
+  ctx.fillStyle = "#ffe45e";
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#a46b00";
+  ctx.font = "bold 15px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("$", c.x, c.y + 5);
+  ctx.restore();
+}
+
+function hit(a, b) {
+  return a.x + 5 < b.x + b.w - 4 &&
+         a.x + a.w - 5 > b.x + 4 &&
+         a.y + 5 < b.y + b.h &&
+         a.y + a.h > b.y + 3;
+}
+
+function gameOver() {
+  running = false;
+  ended = true;
+
+  const finalScore = Math.floor(score);
+
+  if (finalScore > best) {
+    best = finalScore;
+    localStorage.setItem("neonBest", best);
+  }
+
+  updateStats();
+  $("message").textContent = "LOJA MBAROI! 💥";
+  $("description").textContent =
+    `Fitove ${finalScore} pikë dhe mblodhe ${coins} monedha. Provo përsëri për rekord të ri!`;
+
+  $("start").textContent = "LUJ PËRSËRI 🔥";
+  $("overlay").classList.remove("hidden");
+}
+
+function update() {
+  if (!running || paused) return;
+
+  frame++;
+  score += .12;
+  speed = Math.min(10, 5 + score / 150);
+
+  player.vy += .65;
+  player.y += player.vy;
+
+  if (player.y >= ground - player.h) {
+    player.y = ground - player.h;
+    player.vy = 0;
+    player.jumping = false;
+  }
+
+  spawn();
+
+  obstacles.forEach(o => {
+    o.x -= speed;
+    if (hit(player, o)) gameOver();
+  });
+
+  treasures.forEach(c => {
+    c.x -= speed;
+
+    const dx = player.x + player.w / 2 - c.x;
+    const dy = player.y + player.h / 2 - c.y;
+
+    if (!c.got && Math.hypot(dx, dy) < 28) {
+      c.got = true;
+      coins++;
+      score += 10;
+      burst(c.x, c.y, "#ffe45e", 12);
+    }
+  });
+
+  obstacles = obstacles.filter(o => o.x + o.w > 0);
+  treasures = treasures.filter(c => c.x > 0 && !c.got);
+
+  particles.forEach(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life--;
+  });
+  particles = particles.filter(p => p.life > 0);
+
+  updateStats();
+}
+
+function draw() {
+  drawBackground();
+  treasures.forEach(drawCoin);
+  obstacles.forEach(drawObstacle);
+  drawPlayer();
+
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life / 25;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x, p.y, 5, 5);
+  });
+  ctx.globalAlpha = 1;
+
+  if (paused) {
+    ctx.fillStyle = "#08091cbb";
+    ctx.fillRect(0, 0, 800, 360);
+    ctx.fillStyle = "white";
+    ctx.font = "bold 38px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("⏸ PAUZË", 400, 180);
+  }
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+$("start").addEventListener("click", startGame);
+$("jump").addEventListener("click", jump);
+
+$("pause").addEventListener("click", () => {
+  if (!running) return;
+  paused = !paused;
+  $("pause").textContent = paused ? "▶ VAZHDO" : "⏸ PAUZË";
+});
+
+$("restart").addEventListener("click", startGame);
+
+canvas.addEventListener("pointerdown", jump);
+
+document.addEventListener("keydown", e => {
+  if (["Space", "ArrowUp"].includes(e.code)) {
+    e.preventDefault();
+    if (e.repeat) return;
+    jump();
+  }
+
+  if (e.code === "Escape" && running) {
+    paused = !paused;
+    $("pause").textContent = paused ? "▶ VAZHDO" : "⏸ PAUZË";
+  }
+});
+
+draw();
+loop();
+</script>
+</body>
+</html>
